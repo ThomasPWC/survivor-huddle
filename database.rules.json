@@ -1,0 +1,32 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "weeks": {
+      "$week": {
+        "names": {
+          ".read": true,
+          "$slot": {
+            ".write": "$slot.matches(/^[0-3]$/)",
+            ".validate": "newData.isString() && newData.val().length <= 14"
+          }
+        },
+        "submitted": {
+          ".read": true,
+          "$slot": {
+            ".write": "$slot.matches(/^[0-3]$/) && !root.child('weeks').child($week).child('submitted').hasChildren(['0','1','2','3'])",
+            ".validate": "newData.isNumber()"
+          }
+        },
+        "picks": {
+          ".read": "data.parent().child('submitted').hasChildren(['0','1','2','3'])",
+          "$slot": {
+            ".write": "$slot.matches(/^[0-3]$/) && !root.child('weeks').child($week).child('submitted').hasChildren(['0','1','2','3'])",
+            ".validate": "newData.hasChildren(['0','1','2','3','4'])",
+            "$i": { ".validate": "newData.isString() && newData.val().length <= 4" }
+          }
+        }
+      }
+    }
+  }
+}
