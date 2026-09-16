@@ -1,26 +1,44 @@
 # Survivor Huddle
 
-One shared NFL survivor entry, four people. Everyone ranks five teams (5 pts for #1 down to 1 pt for #5), picks are sealed until all four have submitted, then the combined ranking is revealed to everyone. Lines (spread, moneyline, total) load live from ESPN's public odds feed every time the page opens, and the week advances automatically.
+**Live:** https://thomaspwc.github.io/survivor-huddle/
+
+One shared NFL survivor entry, four people. Everyone ranks five teams (5 pts for #1 down to 1 pt for #5), picks are sealed until all four have submitted, then the combined ranking is revealed. Lines (spread, moneyline, total) load live from ESPN's public odds feed every time the page opens, and the week advances automatically.
+
+Static single-page site, hosted on GitHub Pages from the `gh-pages` branch. Personal project. No company infrastructure.
 
 Files:
 
 - `index.html` — the whole app (one file, no build step)
 - `database.rules.json` — Firebase Realtime Database rules that keep picks sealed until all four are in, then lock them
-- `firebase.json` — Firebase Hosting + rules config, so one command deploys both
+- `firebase.json` — optional, only if you ever want to deploy the rules with the Firebase CLI instead of pasting them
 
-## One-time setup (about 10 minutes)
+## Deploy
+
+Edit `index.html`, commit, and push the same commit to both branches:
+
+```sh
+git push origin master
+git push origin master:gh-pages
+```
+
+GitHub Pages redeploys within a minute or two. Nothing needs to change week to week; the page pulls the current week and lines on its own.
+
+## Turning on group sharing (one-time, about 10 minutes)
+
+Until this is done the page runs in local-only mode: everything works but picks stay on each person's own device and a yellow banner says so. Sharing needs a free Firebase Realtime Database.
 
 ### 1. Create the free Firebase project
 
 1. Go to https://console.firebase.google.com and click **Add project**. Name it anything (e.g. `survivor-huddle`). Google Analytics can be turned off.
 2. In the left menu open **Build → Realtime Database → Create Database**. Pick any location, choose **Start in locked mode**, click Enable.
-3. Copy the database URL shown at the top of the Data tab. It looks like `https://survivor-huddle-xxxxx-default-rtdb.firebaseio.com`.
-4. Click the gear next to **Project Overview → Project settings**. Scroll to **Your apps**, click the **</>** (Web) icon, give it a nickname, skip Hosting for now, click Register app.
-5. Copy the `firebaseConfig` object it shows you.
+3. On the **Rules** tab, replace the contents with the contents of `database.rules.json` from this repo and click **Publish**.
+4. Copy the database URL shown at the top of the **Data** tab. It looks like `https://survivor-huddle-xxxxx-default-rtdb.firebaseio.com`.
+5. Click the gear next to **Project Overview → Project settings**. Scroll to **Your apps**, click the **</>** (Web) icon, give it a nickname, skip Hosting, click Register app.
+6. Copy the `firebaseConfig` object it shows you.
 
 ### 2. Paste the config into the page
 
-Open `index.html`, find `const FIREBASE_CONFIG = {` near the top of the script, and replace the commented-out lines with your values. Make sure `databaseURL` is included (add it from step 3 if the console didn't show it):
+Open `index.html`, find `const FIREBASE_CONFIG = {` near the top of the script, and replace the commented-out lines with your values. Make sure `databaseURL` is included (add it from step 4 if the console didn't show it):
 
 ```js
 const FIREBASE_CONFIG = {
@@ -34,31 +52,9 @@ const FIREBASE_CONFIG = {
 
 Optionally fill in the four names in `DEFAULT_NAMES` on the next line so the slots are pre-labelled.
 
-### 3. Publish the rules and the page
+### 3. Push
 
-From this folder, in a terminal:
-
-```bash
-npx firebase-tools login
-```
-
-```bash
-npx firebase-tools use --add
-```
-
-(pick the project you just made, alias it `default`), then
-
-```bash
-npx firebase-tools deploy
-```
-
-That uploads the database rules and hosts the page. The output ends with a **Hosting URL** like `https://survivor-huddle-xxxxx.web.app`. That's the link to text everyone.
-
-Re-run `npx firebase-tools deploy` any time you change `index.html`. Nothing needs to change week to week.
-
-### Alternative hosting
-
-If you'd rather not use the Firebase CLI, the rules can be pasted by hand into **Realtime Database → Rules** in the console, and `index.html` can be hosted anywhere static (Netlify Drop, GitHub Pages, Cloudflare Pages). The page only needs the database, not Firebase Hosting.
+Commit and push to both branches as in **Deploy** above. The banner disappears and the four of you are sharing one board.
 
 ## How it works for the group
 
@@ -72,5 +68,5 @@ If you'd rather not use the Firebase CLI, the rules can be pasted by hand into *
 ## Notes
 
 - The Firebase free tier (Spark) is far more than enough for four people.
-- The `apiKey` in a Firebase web config is not a secret; it identifies the project. Access is controlled by the rules file.
-- Anyone with the link can pick any slot. That's fine for a friend group; if a stranger ever gets the link, just rotate to a new Firebase project.
+- The `apiKey` in a Firebase web config is not a secret; it identifies the project. Access is controlled by the rules file. It is fine for it to be in this public repo.
+- Anyone with the link can pick any slot. That's fine for a friend group; if a stranger ever gets the link, rotate to a new Firebase project.
