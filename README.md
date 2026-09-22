@@ -64,6 +64,11 @@ Commit and push to both branches as in **Deploy** above. The banner disappears a
 - Anyone can hit **Edit picks** to change their mind until the fourth person submits. After that, the week is locked.
 - When the fourth ballot lands, everyone's page updates live: the group pick, the full point ranking, and each person's number on every team.
 - The ◀ ▶ arrows next to the week let you look back at last week's result or ahead at next week's lines.
+- **Teams already used**: the sidebar lists every team the entry has burned, with the week. Those teams are crossed out in the matchups and can't be picked. After the group submits its real pick each week, anyone marks that team as used (team + week, then **Mark used**). ✕ on a chip removes it. The list is shared through the database (`used/<ABBR> = week`); `SEED_USED` in `index.html` is the starting point (JAX Week 1, SF Week 2).
+
+## Updating the database rules
+
+Whenever `database.rules.json` changes, paste its contents into **Realtime Database → Rules** in the Firebase console and click **Publish**. The `used` section was added 2026-09-22; until it's published, marking a team as used shows a "rules need the 'used' section" message.
 
 ## Notes
 

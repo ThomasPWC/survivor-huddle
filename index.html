@@ -116,6 +116,17 @@ button:focus-visible,input:focus-visible,[tabindex]:focus-visible{outline:2px so
 .team .rk{position:absolute;top:8px;font-family:var(--display);font-weight:700;font-size:14px;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;background:var(--accent);color:var(--accent-ink)}
 .team.away .rk{right:8px}.team.home .rk{left:8px}
 .team.away.mine .body{padding-right:40px}.team.home.mine .body{padding-left:40px}
+.team.used{opacity:.45}
+.team.used .nm{text-decoration:line-through;text-decoration-thickness:3px;text-decoration-color:var(--warn)}
+.team .usedtag{position:absolute;top:8px;font-family:var(--display);font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;background:var(--ink);color:var(--bg);padding:3px 7px;border-radius:4px;white-space:nowrap}
+.team.away .usedtag{right:8px}.team.home .usedtag{left:8px}
+.usedlist{padding:10px 14px;display:flex;flex-wrap:wrap;gap:6px}
+.usedlist .none{font-size:13px;color:var(--ink-3)}
+.uchip{display:inline-flex;align-items:center;gap:6px;padding:3px 4px 3px 10px;border:1px solid var(--line-strong);border-radius:999px;font-family:var(--display);font-size:17px;font-weight:700;background:var(--surface-2)}
+.uchip b{color:var(--ink-3);font-weight:600;font-size:13px;letter-spacing:.04em}
+.usedadd{justify-content:flex-start}
+.usedadd select{font:inherit;padding:7px 8px;border-radius:8px;border:1px solid var(--line-strong);background:var(--surface);color:var(--ink);min-width:0}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 .chips{display:flex;gap:3px;flex-wrap:wrap}
 .chip{width:14px;height:14px;border-radius:3px;background:var(--pc);color:#fff;font-family:var(--display);font-size:10px;font-weight:700;display:grid;place-items:center;line-height:1}
 @media (max-width:560px){
@@ -135,6 +146,8 @@ button:focus-visible,input:focus-visible,[tabindex]:focus-visible{outline:2px so
   .team.home .sub{justify-content:flex-start}
   .team .rk{width:30px;height:30px;font-size:17px;top:12px}
   .team.home .rk{left:auto;right:10px}
+  .team .usedtag{top:12px;font-size:13px}
+  .team.home .usedtag{left:auto;right:10px}
   .team.away.mine .body,.team.home.mine .body{padding-left:14px;padding-right:50px}
   .team .nm{font-size:30px}
   .team .nm small{font-size:14px;margin-top:4px}
@@ -267,6 +280,15 @@ button:focus-visible,input:focus-visible,[tabindex]:focus-visible{outline:2px so
         <div class="rows" id="rows"></div>
         <div class="legend" id="legend"></div>
       </div>
+      <div class="panel">
+        <h2>Teams already used <span id="used-sub"></span></h2>
+        <div class="usedlist" id="usedlist"></div>
+        <div class="pfoot usedadd">
+          <label for="usedTeam" class="sr">Team</label><select id="usedTeam"></select>
+          <label for="usedWeek" class="sr">Week</label><select id="usedWeek"></select>
+          <button class="btn" id="markUsed">Mark used</button>
+        </div>
+      </div>
     </aside>
   </div>
 
@@ -286,7 +308,12 @@ const FIREBASE_CONFIG = {
   appId: "1:40042011345:web:caa2d5a2a8195448de03f0"
 };
 const DEFAULT_NAMES = ["Thomas", "", "", ""];   // optional: pre-fill the four slots
+// Teams this entry has already burned, with the week they were used. This is the
+// starting point; the shared "used" list in the database adds to / overrides it.
+const SEED_USED = { JAX: 1, SF: 2 };
 // =====================================================================
+
+const ALL_TEAMS = ["ARI","ATL","BAL","BUF","CAR","CHI","CIN","CLE","DAL","DEN","DET","GB","HOU","IND","JAX","KC","LAC","LAR","LV","MIA","MIN","NE","NO","NYG","NYJ","PHI","PIT","SEA","SF","TB","TEN","WSH"];
 
 const PICKER_COLORS = ["#1E6B43", "#2F5FA8", "#B8860B", "#A23B3B"];
 const PTS = [5, 4, 3, 2, 1];
@@ -304,6 +331,8 @@ let submitted = Array(N).fill(null);   // timestamp or null
 let picks = Array(N).fill(null);       // revealed picks (only when all submitted)
 let db = null, dbOK = false;
 let unsub = [];
+let usedDb = {};            // shared "used" list from the database: abbr -> week (0 = cleared)
+const usedMap = () => { const m = { ...SEED_USED }; for (const [k, v] of Object.entries(usedDb)) { if (v > 0) m[k] = v; else delete m[k]; } return m; };
 let weekOverride = null;    // ▶/◀ navigation
 
 const wkKey = () => WEEK ? `${WEEK.season}-w${WEEK.week}` : null;
@@ -341,7 +370,13 @@ async function loadWeek(weekNum, season) {
 function connectDb() {
   if (!FIREBASE_CONFIG.databaseURL || typeof firebase === "undefined") { document.getElementById("nodb").hidden = false; return; }
   try { firebase.initializeApp(FIREBASE_CONFIG); db = firebase.database(); dbOK = true; }
-  catch (e) { console.error(e); document.getElementById("nodb").hidden = false; }
+  catch (e) { console.error(e); document.getElementById("nodb").hidden = false; return; }
+  db.ref("used").on("value", s => { usedDb = s.val() || {}; render(); }, e => console.warn("used", e.code));
+}
+async function setUsed(abbr, week) {
+  if (!dbOK) { usedDb[abbr] = week; LS.set("used", usedDb); render(); return; }
+  try { await db.ref("used/" + abbr).set(week); toast(week > 0 ? `${abbr} marked as used in Week ${week}.` : `${abbr} is available again.`); }
+  catch (e) { console.error(e); toast(e.code === "PERMISSION_DENIED" ? "Can't save yet: the database rules need the 'used' section (see README)." : "Couldn't save. Try again."); }
 }
 function subscribeWeek() {
   unsub.forEach(f => f()); unsub = [];
@@ -349,6 +384,7 @@ function subscribeWeek() {
   submitted = Array(N).fill(null); picks = Array(N).fill(null);
   if (!dbOK) {
     // local-only fallback: everything on this device
+    usedDb = LS.get("used", {});
     const loc = LS.get("local:" + wkKey(), {});
     names = loc.names || names; submitted = loc.submitted || submitted; picks = loc.picks || picks;
     render(); return;
@@ -404,6 +440,8 @@ function toggleTeam(abbr) {
   if (iAmIn()) { toast("You've submitted. Tap Edit picks to change them."); return; }
   const { g, side } = teams[abbr];
   if (started(g)) { toast("That game has already started."); return; }
+  const uw = usedMap()[abbr];
+  if (uw) { toast(`Already used ${abbr} in Week ${uw}. Can't pick them again.`); return; }
   const i = draft.indexOf(abbr);
   if (i >= 0) draft.splice(i, 1);
   else {
@@ -443,8 +481,30 @@ function setName(i, v) {
 // ---------- render ----------
 function render() {
   if (!WEEK) return;
-  renderHeader(); renderWho(); renderGames(); renderBallot(); renderBoard();
+  renderHeader(); renderWho(); renderGames(); renderBallot(); renderBoard(); renderUsed();
 }
+function renderUsed() {
+  const u = usedMap();
+  const entries = Object.entries(u).sort((a, b) => a[1] - b[1]);
+  document.getElementById("used-sub").textContent = entries.length ? `${entries.length} of 32 burned` : "";
+  const list = document.getElementById("usedlist");
+  list.innerHTML = entries.length
+    ? entries.map(([abbr, w]) => `<span class="uchip"><b>W${w}</b>${esc(abbr)}<button class="ib" data-unuse="${esc(abbr)}" aria-label="Remove ${esc(abbr)} from used list" title="Remove">✕</button></span>`).join("")
+    : `<span class="none">Nothing used yet. Mark the team the group actually submits each week.</span>`;
+  list.querySelectorAll("[data-unuse]").forEach(b => b.addEventListener("click", () => setUsed(b.dataset.unuse, 0)));
+  const tSel = document.getElementById("usedTeam"), wSel = document.getElementById("usedWeek");
+  const tPrev = tSel.value, wPrev = wSel.value;
+  tSel.innerHTML = `<option value="">Team…</option>` + ALL_TEAMS.filter(a => !u[a]).map(a => `<option value="${a}">${a}</option>`).join("");
+  wSel.innerHTML = Array.from({ length: 18 }, (_, i) => `<option value="${i + 1}">Week ${i + 1}</option>`).join("");
+  if (tPrev && !u[tPrev]) tSel.value = tPrev;
+  wSel.value = wPrev || String(WEEK.week || 1);
+}
+document.getElementById("markUsed").addEventListener("click", () => {
+  const abbr = document.getElementById("usedTeam").value, wk = +document.getElementById("usedWeek").value;
+  if (!abbr) { toast("Pick the team first."); return; }
+  setUsed(abbr, wk);
+  document.getElementById("usedTeam").value = "";
+});
 function renderHeader() {
   document.getElementById("wk").textContent = `Week ${WEEK.week ?? "?"} · ${WEEK.season ?? ""}`;
   const dates = WEEK.games.map(g => new Date(g.date)).sort((a, b) => a - b);
@@ -458,7 +518,8 @@ function renderHeader() {
   document.getElementById("wknext").disabled = (WEEK.week || 18) >= 18;
   document.getElementById("foot").textContent =
     "Lines refresh every time the page loads. Win % is implied by the moneyline with the book's margin removed. " +
-    "Your picks are sealed until all four have submitted, then everyone's ballot and the combined ranking appear for everyone.";
+    "Your picks are sealed until all four have submitted, then everyone's ballot and the combined ranking appear for everyone. " +
+    "Teams on the used list are crossed out and can't be picked; mark the team the group actually submits each week.";
 }
 function renderWho() {
   const el = document.getElementById("who");
@@ -507,14 +568,15 @@ function teamBtn(g, side) {
   const t = g[side], abbr = t.abbr, mine = myPicks();
   const rank = mine.indexOf(abbr);
   const opp = g[side === "away" ? "home" : "away"].abbr;
-  const dead = rank < 0 && (mine.includes(opp) || started(g));
+  const usedWk = usedMap()[abbr];
+  const dead = rank < 0 && (mine.includes(opp) || started(g) || usedWk);
   const sp = spreadFor(g, side), op = openFor(g, side), wp = winProb(g, side);
   const ml = side === "away" ? g.odds.awayML : g.odds.homeML;
   const fav = sp != null && sp < 0;
   const others = allIn() ? picks.map((p, i) => ({ i, r: (p || []).indexOf(abbr) })).filter(x => x.r >= 0 && x.i !== me) : [];
   const moved = op != null && op !== sp ? `<span>Open <b>${fmtSpread(op)}</b></span>` : "";
   const locked = iAmIn() || allIn();
-  return `<button class="team ${side} ${rank >= 0 ? "mine" : ""} ${dead ? "dead" : ""}" data-abbr="${abbr}" ${(dead || locked) && rank < 0 ? "disabled" : ""} ${locked ? "disabled" : ""}>
+  return `<button class="team ${side} ${rank >= 0 ? "mine" : ""} ${dead ? "dead" : ""} ${usedWk ? "used" : ""}" data-abbr="${abbr}" ${(dead || locked) && rank < 0 ? "disabled" : ""} ${locked ? "disabled" : ""}>
     <span class="bar" style="background:#${esc(t.color)}"></span>
     <span class="body">
       <span class="nm">${esc(abbr)}<small>${esc(t.loc)} ${esc(t.name)}${t.record ? " · " + esc(t.record) : ""}</small></span>
@@ -523,7 +585,7 @@ function teamBtn(g, side) {
         ${others.length ? `<span class="chips">${others.map(o => `<i class="chip" style="--pc:${PICKER_COLORS[o.i]}" title="${esc(nameOf(o.i))} #${o.r + 1}">${o.r + 1}</i>`).join("")}</span>` : ""}
       </span>
     </span>
-    ${rank >= 0 ? `<span class="rk">${rank + 1}</span>` : ""}
+    ${rank >= 0 ? `<span class="rk">${rank + 1}</span>` : usedWk ? `<span class="usedtag">Used W${usedWk}</span>` : ""}
   </button>`;
 }
 function renderBallotHead() {
