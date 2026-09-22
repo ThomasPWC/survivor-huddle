@@ -68,7 +68,7 @@ Commit and push to both branches as in **Deploy** above. The banner disappears a
 
 ## Updating the database rules
 
-Whenever `database.rules.json` changes, paste its contents into **Realtime Database → Rules** in the Firebase console and click **Publish**. The `used` section was added 2026-09-22; until it's published, marking a team as used shows a "rules need the 'used' section" message.
+Whenever `database.rules.json` changes, paste its contents into **Realtime Database → Rules** in the Firebase console and click **Publish**. The root-level `names` (names carry across weeks) and `used` sections were added 2026-09-22; until they're published, marking a team as used shows a "rules need the 'used' section" message and names fall back to per-week storage.
 
 ## Notes
 

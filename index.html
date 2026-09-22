@@ -307,7 +307,7 @@ const FIREBASE_CONFIG = {
   projectId: "survivor-abe2d",
   appId: "1:40042011345:web:caa2d5a2a8195448de03f0"
 };
-const DEFAULT_NAMES = ["Thomas", "", "", ""];   // optional: pre-fill the four slots
+const DEFAULT_NAMES = ["Thomas", "Kyle", "Travis", "Mason"];   // the four slots, in order
 // Teams this entry has already burned, with the week they were used. This is the
 // starting point; the shared "used" list in the database adds to / overrides it.
 const SEED_USED = { JAX: 1, SF: 2 };
@@ -372,6 +372,15 @@ function connectDb() {
   try { firebase.initializeApp(FIREBASE_CONFIG); db = firebase.database(); dbOK = true; }
   catch (e) { console.error(e); document.getElementById("nodb").hidden = false; return; }
   db.ref("used").on("value", s => { usedDb = s.val() || {}; render(); }, e => console.warn("used", e.code));
+  // Names live at the root so they carry over from week to week.
+  db.ref("names").on("value", s => { globalNames = s.val() || {}; applyNames(); render(); }, e => console.warn("names", e.code));
+}
+let globalNames = {}, weekNames = {};
+function applyNames() {
+  for (let i = 0; i < N; i++) {
+    const g = globalNames[i], w = weekNames[i];
+    names[i] = (g != null && String(g).trim()) ? String(g) : (w != null && String(w).trim()) ? String(w) : (DEFAULT_NAMES[i] || "");
+  }
 }
 async function setUsed(abbr, week) {
   if (!dbOK) { usedDb[abbr] = week; LS.set("used", usedDb); render(); return; }
@@ -391,7 +400,7 @@ function subscribeWeek() {
   }
   const base = db.ref("weeks/" + wkKey());
   const on = (ref, cb) => { const h = ref.on("value", s => { cb(s.val()); }, e => { console.warn(ref.toString(), e.code); if (e.code === "PERMISSION_DENIED") cb(undefined); }); unsub.push(() => ref.off("value", h)); };
-  on(base.child("names"), v => { if (v) for (let i = 0; i < N; i++) if (v[i] != null) names[i] = String(v[i]); render(); });
+  on(base.child("names"), v => { weekNames = v || {}; applyNames(); render(); });
   let picksSub = false;
   on(base.child("submitted"), v => {
     submitted = Array.from({ length: N }, (_, i) => (v && v[i]) || null);
@@ -474,7 +483,13 @@ let nameTimer = {};
 function setName(i, v) {
   names[i] = v;
   clearTimeout(nameTimer[i]);
-  nameTimer[i] = setTimeout(() => dbWrite("names/" + i, v.trim().slice(0, 14)).catch(() => {}), 500);
+  nameTimer[i] = setTimeout(async () => {
+    const val = v.trim().slice(0, 14);
+    if (dbOK) {
+      // root-level name (carries across weeks); fall back to this week's slot if the root rule isn't published yet
+      try { await db.ref("names/" + i).set(val); } catch (e) { await dbWrite("names/" + i, val).catch(() => {}); }
+    } else await dbWrite("names/" + i, val).catch(() => {});
+  }, 500);
   renderBallotHead(); renderBoard();
 }
 

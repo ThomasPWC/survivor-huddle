@@ -2,6 +2,13 @@
   "rules": {
     ".read": false,
     ".write": false,
+    "names": {
+      ".read": true,
+      "$slot": {
+        ".write": "$slot.matches(/^[0-3]$/)",
+        ".validate": "newData.isString() && newData.val().length <= 14"
+      }
+    },
     "used": {
       ".read": true,
       "$abbr": {
