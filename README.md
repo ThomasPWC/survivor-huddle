@@ -64,11 +64,12 @@ Commit and push to both branches as in **Deploy** above. The banner disappears a
 - Anyone can hit **Edit picks** to change their mind until the fourth person submits. After that, the week is locked.
 - When the fourth ballot lands, everyone's page updates live: the group pick, the full point ranking, and each person's number on every team.
 - The ◀ ▶ arrows next to the week let you look back at last week's result or ahead at next week's lines.
-- **Teams already used**: the sidebar lists every team the entry has burned, with the week. Those teams are crossed out in the matchups and can't be picked. After the group submits its real pick each week, anyone marks that team as used (team + week, then **Mark used**). ✕ on a chip removes it. The list is shared through the database (`used/<ABBR> = week`); `SEED_USED` in `index.html` is the starting point (JAX Week 1, SF Week 2).
+- **Our picks so far**: the sidebar lists each week and the team the group actually submitted. Those teams are crossed out in the matchups and can't be picked again. After a week reveals, the results card offers a one-tap **Mark X as our Week N pick**; or tap **Mark pick / Change** on any week row and pick from the team grid. Picks are shared through the database at `weeks/pick-w<N>/names/0` (a pseudo-week, so the published rules already cover it). `SEED_PICKS` in `index.html` is the fallback starting point.
+- Player names are stored at `weeks/profile/names/<slot>` (another pseudo-week) so they carry across weeks.
 
-## Updating the database rules
+## Database rules
 
-Whenever `database.rules.json` changes, paste its contents into **Realtime Database → Rules** in the Firebase console and click **Publish**. The root-level `names` (names carry across weeks) and `used` sections were added 2026-09-22; until they're published, marking a team as used shows a "rules need the 'used' section" message and names fall back to per-week storage.
+`database.rules.json` is what's published in the Firebase console. If it ever changes, paste its contents into **Realtime Database → Rules** and click **Publish**. The app deliberately keeps all shared data under `weeks/<key>/...` so the rules haven't needed to change since the first publish.
 
 ## Notes
 

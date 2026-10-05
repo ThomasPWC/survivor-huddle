@@ -120,13 +120,25 @@ button:focus-visible,input:focus-visible,[tabindex]:focus-visible{outline:2px so
 .team.used .nm{text-decoration:line-through;text-decoration-thickness:3px;text-decoration-color:var(--warn)}
 .team .usedtag{position:absolute;top:8px;font-family:var(--display);font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;background:var(--ink);color:var(--bg);padding:3px 7px;border-radius:4px;white-space:nowrap}
 .team.away .usedtag{right:8px}.team.home .usedtag{left:8px}
-.usedlist{padding:10px 14px;display:flex;flex-wrap:wrap;gap:6px}
-.usedlist .none{font-size:13px;color:var(--ink-3)}
-.uchip{display:inline-flex;align-items:center;gap:6px;padding:3px 4px 3px 10px;border:1px solid var(--line-strong);border-radius:999px;font-family:var(--display);font-size:17px;font-weight:700;background:var(--surface-2)}
-.uchip b{color:var(--ink-3);font-weight:600;font-size:13px;letter-spacing:.04em}
-.usedadd{justify-content:flex-start}
-.usedadd select{font:inherit;padding:7px 8px;border-radius:8px;border:1px solid var(--line-strong);background:var(--surface);color:var(--ink);min-width:0}
-.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.weeks{display:grid}
+.wrow{display:grid;grid-template-columns:44px 1fr auto;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid var(--line);min-height:50px}
+.wrow:last-child{border-bottom:0}
+.wrow .w{font-family:var(--display);font-weight:600;font-size:15px;letter-spacing:.06em;color:var(--ink-3)}
+.wrow .tm{font-family:var(--display);font-weight:700;font-size:24px;line-height:1;display:flex;align-items:center;gap:8px}
+.wrow .tm small{font-family:var(--body);font-weight:500;font-size:13px;color:var(--ink-3)}
+.wrow.unset .tm{color:var(--warn);font-size:15px;font-family:var(--body);font-weight:600}
+.wrow.open{background:var(--surface-2)}
+.btn.small{padding:6px 12px;font-size:13px}
+.teamgrid{padding:12px 14px 14px;border-top:1px solid var(--line);background:var(--surface-2)}
+.teamgrid .q{font-size:14px;font-weight:600;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:8px}
+.teamgrid .cells{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.tchip{font-family:var(--display);font-weight:700;font-size:18px;padding:10px 4px;border-radius:8px;border:1.5px solid var(--line-strong);background:var(--surface);text-align:center;line-height:1;display:grid;gap:3px}
+.tchip small{font-family:var(--body);font-weight:600;font-size:10px;letter-spacing:.06em;color:var(--ink-3);text-transform:uppercase}
+.tchip:hover:not(:disabled){border-color:var(--ink)}
+.tchip.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.tchip.on small{color:var(--accent-ink)}
+.tchip:disabled{opacity:.35;text-decoration:line-through}
+.teamgrid .acts{display:flex;gap:8px;justify-content:flex-end;margin-top:10px}
 .chips{display:flex;gap:3px;flex-wrap:wrap}
 .chip{width:14px;height:14px;border-radius:3px;background:var(--pc);color:#fff;font-family:var(--display);font-size:10px;font-weight:700;display:grid;place-items:center;line-height:1}
 @media (max-width:560px){
@@ -281,13 +293,9 @@ button:focus-visible,input:focus-visible,[tabindex]:focus-visible{outline:2px so
         <div class="legend" id="legend"></div>
       </div>
       <div class="panel">
-        <h2>Teams already used <span id="used-sub"></span></h2>
-        <div class="usedlist" id="usedlist"></div>
-        <div class="pfoot usedadd">
-          <label for="usedTeam" class="sr">Team</label><select id="usedTeam"></select>
-          <label for="usedWeek" class="sr">Week</label><select id="usedWeek"></select>
-          <button class="btn" id="markUsed">Mark used</button>
-        </div>
+        <h2>Our picks so far <span id="used-sub"></span></h2>
+        <div class="weeks" id="weeklist"></div>
+        <div class="teamgrid" id="teamgrid" hidden></div>
       </div>
     </aside>
   </div>
@@ -308,9 +316,9 @@ const FIREBASE_CONFIG = {
   appId: "1:40042011345:web:caa2d5a2a8195448de03f0"
 };
 const DEFAULT_NAMES = ["Thomas", "Kyle", "Travis", "Mason"];   // the four slots, in order
-// Teams this entry has already burned, with the week they were used. This is the
-// starting point; the shared "used" list in the database adds to / overrides it.
-const SEED_USED = { JAX: 1, SF: 2 };
+// The team the group actually submitted each week. Starting point only; picks marked
+// in the app are shared through the database and override these week by week.
+const SEED_PICKS = { 1: "JAX", 2: "SF", 3: "BAL", 4: "KC" };
 // =====================================================================
 
 const ALL_TEAMS = ["ARI","ATL","BAL","BUF","CAR","CHI","CIN","CLE","DAL","DEN","DET","GB","HOU","IND","JAX","KC","LAC","LAR","LV","MIA","MIN","NE","NO","NYG","NYJ","PHI","PIT","SEA","SF","TB","TEN","WSH"];
@@ -331,8 +339,10 @@ let submitted = Array(N).fill(null);   // timestamp or null
 let picks = Array(N).fill(null);       // revealed picks (only when all submitted)
 let db = null, dbOK = false;
 let unsub = [];
-let usedDb = {};            // shared "used" list from the database: abbr -> week (0 = cleared)
-const usedMap = () => { const m = { ...SEED_USED }; for (const [k, v] of Object.entries(usedDb)) { if (v > 0) m[k] = v; else delete m[k]; } return m; };
+let dbPicks = {};           // week -> team the group submitted, from the database ("" = cleared)
+let gridWeek = null;        // which week the team grid is open for
+const picksByWeek = () => { const m = { ...SEED_PICKS }; for (const [w, a] of Object.entries(dbPicks)) { if (a) m[w] = a; else delete m[w]; } return m; };
+const usedMap = () => { const u = {}; for (const [w, a] of Object.entries(picksByWeek())) u[a] = +w; return u; };
 let weekOverride = null;    // ▶/◀ navigation
 
 const wkKey = () => WEEK ? `${WEEK.season}-w${WEEK.week}` : null;
@@ -371,9 +381,14 @@ function connectDb() {
   if (!FIREBASE_CONFIG.databaseURL || typeof firebase === "undefined") { document.getElementById("nodb").hidden = false; return; }
   try { firebase.initializeApp(FIREBASE_CONFIG); db = firebase.database(); dbOK = true; }
   catch (e) { console.error(e); document.getElementById("nodb").hidden = false; return; }
-  db.ref("used").on("value", s => { usedDb = s.val() || {}; render(); }, e => console.warn("used", e.code));
-  // Names live at the root so they carry over from week to week.
-  db.ref("names").on("value", s => { globalNames = s.val() || {}; applyNames(); render(); }, e => console.warn("names", e.code));
+  // Shared data that isn't tied to one week lives under pseudo-weeks, so the database
+  // rules already published cover it (any "weeks/<key>/names/<0-3>" is a short string):
+  //   weeks/profile/names/<slot>  = player names, carried over week to week
+  //   weeks/pick-w<N>/names/0     = the team the group actually submitted in week N
+  db.ref("weeks/profile/names").on("value", s => { globalNames = s.val() || {}; applyNames(); render(); }, e => console.warn("names", e.code));
+  for (let w = 1; w <= 18; w++) {
+    db.ref(`weeks/pick-w${w}/names/0`).on("value", s => { const v = s.val(); if (v == null) delete dbPicks[w]; else dbPicks[w] = String(v); render(); }, e => console.warn("pick", w, e.code));
+  }
 }
 let globalNames = {}, weekNames = {};
 function applyNames() {
@@ -382,10 +397,13 @@ function applyNames() {
     names[i] = (g != null && String(g).trim()) ? String(g) : (w != null && String(w).trim()) ? String(w) : (DEFAULT_NAMES[i] || "");
   }
 }
-async function setUsed(abbr, week) {
-  if (!dbOK) { usedDb[abbr] = week; LS.set("used", usedDb); render(); return; }
-  try { await db.ref("used/" + abbr).set(week); toast(week > 0 ? `${abbr} marked as used in Week ${week}.` : `${abbr} is available again.`); }
-  catch (e) { console.error(e); toast(e.code === "PERMISSION_DENIED" ? "Can't save yet: the database rules need the 'used' section (see README)." : "Couldn't save. Try again."); }
+async function setGroupPick(week, abbr) {
+  abbr = abbr || "";
+  gridWeek = null;
+  if (!dbOK) { dbPicks[week] = abbr; LS.set("groupPicks", dbPicks); render(); return; }
+  try { await db.ref(`weeks/pick-w${week}/names/0`).set(abbr); toast(abbr ? `Week ${week}: ${abbr} marked as used.` : `Week ${week} pick cleared.`); }
+  catch (e) { console.error(e); toast("Couldn't save. Check your connection and try again."); }
+  render();
 }
 function subscribeWeek() {
   unsub.forEach(f => f()); unsub = [];
@@ -393,7 +411,7 @@ function subscribeWeek() {
   submitted = Array(N).fill(null); picks = Array(N).fill(null);
   if (!dbOK) {
     // local-only fallback: everything on this device
-    usedDb = LS.get("used", {});
+    dbPicks = LS.get("groupPicks", {});
     const loc = LS.get("local:" + wkKey(), {});
     names = loc.names || names; submitted = loc.submitted || submitted; picks = loc.picks || picks;
     render(); return;
@@ -464,7 +482,7 @@ function toggleTeam(abbr) {
 function move(idx, dir) { const j = idx + dir; if (j < 0 || j >= draft.length) return; [draft[idx], draft[j]] = [draft[j], draft[idx]]; saveDraft(); render(); }
 function removeAt(idx) { draft.splice(idx, 1); saveDraft(); render(); }
 function saveDraft() { LS.set("draft:" + wkKey() + ":" + me, draft); }
-function loadDraft() { draft = me == null ? [] : LS.get("draft:" + wkKey() + ":" + me, []).filter(a => teams[a]).slice(0, 5); }
+function loadDraft() { const u = usedMap(); draft = me == null ? [] : LS.get("draft:" + wkKey() + ":" + me, []).filter(a => teams[a] && !u[a]).slice(0, 5); }
 async function submitPicks() {
   if (draft.length !== 5) { toast("Rank all 5 teams before submitting."); return; }
   try {
@@ -486,8 +504,9 @@ function setName(i, v) {
   nameTimer[i] = setTimeout(async () => {
     const val = v.trim().slice(0, 14);
     if (dbOK) {
-      // root-level name (carries across weeks); fall back to this week's slot if the root rule isn't published yet
-      try { await db.ref("names/" + i).set(val); } catch (e) { await dbWrite("names/" + i, val).catch(() => {}); }
+      // profile name carries across weeks; also stamp this week's slot so older pages agree
+      try { await db.ref("weeks/profile/names/" + i).set(val); } catch (e) { console.warn(e); }
+      await dbWrite("names/" + i, val).catch(() => {});
     } else await dbWrite("names/" + i, val).catch(() => {});
   }, 500);
   renderBallotHead(); renderBoard();
@@ -496,30 +515,37 @@ function setName(i, v) {
 // ---------- render ----------
 function render() {
   if (!WEEK) return;
-  renderHeader(); renderWho(); renderGames(); renderBallot(); renderBoard(); renderUsed();
+  renderHeader(); renderWho(); renderGames(); renderBallot(); renderBoard(); renderPicks();
 }
-function renderUsed() {
-  const u = usedMap();
-  const entries = Object.entries(u).sort((a, b) => a[1] - b[1]);
-  document.getElementById("used-sub").textContent = entries.length ? `${entries.length} of 32 burned` : "";
-  const list = document.getElementById("usedlist");
-  list.innerHTML = entries.length
-    ? entries.map(([abbr, w]) => `<span class="uchip"><b>W${w}</b>${esc(abbr)}<button class="ib" data-unuse="${esc(abbr)}" aria-label="Remove ${esc(abbr)} from used list" title="Remove">✕</button></span>`).join("")
-    : `<span class="none">Nothing used yet. Mark the team the group actually submits each week.</span>`;
-  list.querySelectorAll("[data-unuse]").forEach(b => b.addEventListener("click", () => setUsed(b.dataset.unuse, 0)));
-  const tSel = document.getElementById("usedTeam"), wSel = document.getElementById("usedWeek");
-  const tPrev = tSel.value, wPrev = wSel.value;
-  tSel.innerHTML = `<option value="">Team…</option>` + ALL_TEAMS.filter(a => !u[a]).map(a => `<option value="${a}">${a}</option>`).join("");
-  wSel.innerHTML = Array.from({ length: 18 }, (_, i) => `<option value="${i + 1}">Week ${i + 1}</option>`).join("");
-  if (tPrev && !u[tPrev]) tSel.value = tPrev;
-  wSel.value = wPrev || String(WEEK.week || 1);
+function renderPicks() {
+  const byWeek = picksByWeek(), u = usedMap();
+  const setWeeks = Object.keys(byWeek).map(Number);
+  const lastWeek = Math.max(WEEK.week || 1, ...setWeeks, 1);
+  document.getElementById("used-sub").textContent = `${setWeeks.length} team${setWeeks.length === 1 ? "" : "s"} burned`;
+  const list = document.getElementById("weeklist");
+  let html = "";
+  for (let w = 1; w <= lastWeek; w++) {
+    const a = byWeek[w], t = a && ALL_TEAM_NAMES[a];
+    html += `<div class="wrow ${a ? "" : "unset"} ${gridWeek === w ? "open" : ""}">
+      <span class="w">WK ${w}</span>
+      <span class="tm">${a ? `${esc(a)}<small>${esc(t || "")}</small>` : (w === WEEK.week ? "Not marked yet" : "Not marked")}</span>
+      <button class="btn small ${a ? "quiet" : "primary"}" data-setwk="${w}">${gridWeek === w ? "Close" : a ? "Change" : "Mark pick"}</button>
+    </div>`;
+  }
+  list.innerHTML = html;
+  list.querySelectorAll("[data-setwk]").forEach(b => b.addEventListener("click", () => { const w = +b.dataset.setwk; gridWeek = gridWeek === w ? null : w; renderPicks(); if (gridWeek) document.getElementById("teamgrid").scrollIntoView({ block: "nearest", behavior: "smooth" }); }));
+  const grid = document.getElementById("teamgrid");
+  if (gridWeek == null) { grid.hidden = true; grid.innerHTML = ""; return; }
+  const cur = byWeek[gridWeek];
+  grid.hidden = false;
+  grid.innerHTML = `<div class="q"><span>Week ${gridWeek}: which team did we submit?</span></div>
+    <div class="cells">${ALL_TEAMS.map(a => { const uw = u[a]; const other = uw && uw !== gridWeek; return `<button class="tchip ${a === cur ? "on" : ""}" data-team="${a}" ${other ? "disabled" : ""}>${a}<small>${other ? "Wk " + uw : a === cur ? "current" : "&nbsp;"}</small></button>`; }).join("")}</div>
+    <div class="acts">${cur ? `<button class="btn quiet" id="clearPick">Clear week ${gridWeek}</button>` : ""}<button class="btn" id="cancelPick">Cancel</button></div>`;
+  grid.querySelectorAll("[data-team]").forEach(b => b.addEventListener("click", () => setGroupPick(gridWeek, b.dataset.team)));
+  grid.querySelector("#clearPick")?.addEventListener("click", () => setGroupPick(gridWeek, ""));
+  grid.querySelector("#cancelPick").addEventListener("click", () => { gridWeek = null; renderPicks(); });
 }
-document.getElementById("markUsed").addEventListener("click", () => {
-  const abbr = document.getElementById("usedTeam").value, wk = +document.getElementById("usedWeek").value;
-  if (!abbr) { toast("Pick the team first."); return; }
-  setUsed(abbr, wk);
-  document.getElementById("usedTeam").value = "";
-});
+const ALL_TEAM_NAMES = { ARI: "Cardinals", ATL: "Falcons", BAL: "Ravens", BUF: "Bills", CAR: "Panthers", CHI: "Bears", CIN: "Bengals", CLE: "Browns", DAL: "Cowboys", DEN: "Broncos", DET: "Lions", GB: "Packers", HOU: "Texans", IND: "Colts", JAX: "Jaguars", KC: "Chiefs", LAC: "Chargers", LAR: "Rams", LV: "Raiders", MIA: "Dolphins", MIN: "Vikings", NE: "Patriots", NO: "Saints", NYG: "Giants", NYJ: "Jets", PHI: "Eagles", PIT: "Steelers", SEA: "Seahawks", SF: "49ers", TB: "Buccaneers", TEN: "Titans", WSH: "Commanders" };
 function renderHeader() {
   document.getElementById("wk").textContent = `Week ${WEEK.week ?? "?"} · ${WEEK.season ?? ""}`;
   const dates = WEEK.games.map(g => new Date(g.date)).sort((a, b) => a - b);
@@ -534,7 +560,7 @@ function renderHeader() {
   document.getElementById("foot").textContent =
     "Lines refresh every time the page loads. Win % is implied by the moneyline with the book's margin removed. " +
     "Your picks are sealed until all four have submitted, then everyone's ballot and the combined ranking appear for everyone. " +
-    "Teams on the used list are crossed out and can't be picked; mark the team the group actually submits each week.";
+    "Teams the group has already submitted are crossed out and can't be picked. After each week's reveal, tap Mark to record the team we actually went with.";
 }
 function renderWho() {
   const el = document.getElementById("who");
@@ -667,7 +693,12 @@ function renderBoard() {
   lead.className = "lead";
   lead.innerHTML = `<div class="eyebrow">${ties.length > 1 ? "Tied at the top" : "Group pick"}</div>
     <div class="big"><span class="nm">${esc(L.abbr)}</span><span class="pts"><b>${L.pts}</b> pts · ${L.by.length} of 4</span></div>
-    <div class="sub">${esc(g[side].loc)} ${esc(g[side].name)} ${side === "home" ? "vs" : "at"} ${esc(opp.abbr)} · ${fmtSpread(spreadFor(g, side))} · ${winProb(g, side) ?? "—"}% to win · ${koLabel(g.date)}${ties.length > 1 ? ` · tied with ${ties.slice(1).map(r => esc(r.abbr)).join(", ")}` : ""}</div>`;
+    <div class="sub">${esc(g[side].loc)} ${esc(g[side].name)} ${side === "home" ? "vs" : "at"} ${esc(opp.abbr)} · ${fmtSpread(spreadFor(g, side))} · ${winProb(g, side) ?? "—"}% to win · ${koLabel(g.date)}${ties.length > 1 ? ` · tied with ${ties.slice(1).map(r => esc(r.abbr)).join(", ")}` : ""}</div>
+    ${(() => { const gp = picksByWeek()[WEEK.week]; return gp
+      ? `<div class="sub" style="margin-top:8px"><b style="color:var(--accent)">✓ We went with ${esc(gp)} this week.</b> Change it in Our picks so far below.</div>`
+      : `<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" id="lockLead">Mark ${esc(L.abbr)} as our Week ${WEEK.week} pick</button><button class="btn quiet" id="lockOther">Different team</button></div>`; })()}`;
+  lead.querySelector("#lockLead")?.addEventListener("click", () => setGroupPick(WEEK.week, L.abbr));
+  lead.querySelector("#lockOther")?.addEventListener("click", () => { gridWeek = WEEK.week; renderPicks(); document.getElementById("teamgrid").scrollIntoView({ block: "nearest", behavior: "smooth" }); });
   rowsEl.innerHTML = rows.map((r, k) => {
     const { t, g, side } = teams[r.abbr]; const opp = g[side === "home" ? "away" : "home"];
     const bar = picks.map((p, i) => { const b = r.by.find(x => x.i === i); return b ? `<i style="--pc:${PICKER_COLORS[i]};width:${b.pts * 7}px" title="${esc(nameOf(i))} #${b.r + 1} (${b.pts} pts)"></i>` : ""; }).join("");
