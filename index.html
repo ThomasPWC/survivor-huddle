@@ -239,6 +239,7 @@ button:focus-visible,input:focus-visible,[tabindex]:focus-visible{outline:2px so
 .legend{padding:10px 14px;display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--ink-3);border-top:1px solid var(--line)}
 .legend span{display:inline-flex;align-items:center;gap:5px}
 .legend i{width:10px;height:10px;border-radius:2px;background:var(--pc)}
+.legend em{font-style:normal;color:var(--warn);font-weight:600}
 .toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%) translateY(20px);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:999px;font-weight:600;font-size:14px;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;box-shadow:var(--shadow);max-width:calc(100vw - 32px);text-align:center}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 .foot{margin-top:28px;font-size:12px;color:var(--ink-3);line-height:1.6;max-width:70ch}
@@ -339,6 +340,12 @@ let submitted = Array(N).fill(null);   // timestamp or null
 let picks = Array(N).fill(null);       // revealed picks (only when all submitted)
 let db = null, dbOK = false;
 let unsub = [];
+let editing = false;        // my ballot is open for changes
+const MAXREV = 4;           // edits allowed per person per week after everyone has submitted
+let revs = Array.from({ length: N }, () => ({}));   // post-reveal edits: revs[slot][n] = {picks, at}
+const revList = i => Object.keys(revs[i]).map(Number).sort((a, b) => a - b).map(n => revs[i][n]);
+const effPicks = i => { const l = revList(i); return l.length ? l[l.length - 1].picks : picks[i]; };
+const edited = i => revList(i).length > 0;
 let dbPicks = {};           // week -> team the group submitted, from the database ("" = cleared)
 let gridWeek = null;        // which week the team grid is open for
 const picksByWeek = () => { const m = { ...SEED_PICKS }; for (const [w, a] of Object.entries(dbPicks)) { if (a) m[w] = a; else delete m[w]; } return m; };
@@ -426,6 +433,20 @@ function subscribeWeek() {
     if (!allIn()) { picks = Array(N).fill(null); }
     render();
   });
+  // Post-reveal edits. The published rules lock a week's picks once all four have submitted,
+  // so an edit is saved as its own mini-week "<key>-r<slot>-<n>" with picks/0 plus four
+  // submitted stamps (which is what makes it readable to everyone). Latest revision wins.
+  revs = Array.from({ length: N }, () => ({}));
+  for (let s = 0; s < N; s++) for (let n = 1; n <= MAXREV; n++) {
+    const rbase = db.ref(`weeks/${wkKey()}-r${s}-${n}`);
+    let sub = false;
+    on(rbase.child("submitted"), v => {
+      if (v && [0, 1, 2, 3].every(i => v[i]) && !sub) {
+        sub = true;
+        on(rbase.child("picks"), pv => { const p = pv && pv[0]; if (Array.isArray(p)) { revs[s][n] = { picks: p, at: v[0] }; render(); } });
+      }
+    });
+  }
 }
 async function dbWrite(path, val) {
   if (!dbOK) {
@@ -458,13 +479,13 @@ function slotOf(d) {
   return day + (hr >= 18 ? " night" : "");
 }
 function toast(msg) { const t = document.getElementById("toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove("show"), 2200); }
-const myPicks = () => me == null ? [] : (allIn() && picks[me]) ? picks[me] : draft;
+const myPicks = () => me == null ? [] : editing ? draft : (allIn() && effPicks(me)) ? effPicks(me) : draft;
 const started = g => g.state !== "pre";
 
 // ---------- actions ----------
 function toggleTeam(abbr) {
   if (me == null) { toast("Pick who you are first (top of the page)."); return; }
-  if (iAmIn()) { toast("You've submitted. Tap Edit picks to change them."); return; }
+  if (iAmIn() && !editing) { toast("You've submitted. Tap Edit picks to change them."); return; }
   const { g, side } = teams[abbr];
   if (started(g)) { toast("That game has already started."); return; }
   const uw = usedMap()[abbr];
@@ -483,18 +504,36 @@ function move(idx, dir) { const j = idx + dir; if (j < 0 || j >= draft.length) r
 function removeAt(idx) { draft.splice(idx, 1); saveDraft(); render(); }
 function saveDraft() { LS.set("draft:" + wkKey() + ":" + me, draft); }
 function loadDraft() { const u = usedMap(); draft = me == null ? [] : LS.get("draft:" + wkKey() + ":" + me, []).filter(a => teams[a] && !u[a]).slice(0, 5); }
-async function submitPicks() {
-  if (draft.length !== 5) { toast("Rank all 5 teams before submitting."); return; }
-  try {
-    await dbWrite("picks/" + me, draft);
-    await dbWrite("submitted/" + me, Date.now());
-    toast(allIn() ? "That's everyone. Results are in." : "Submitted. Waiting on the others.");
-  } catch (e) { console.error(e); toast(e.code === "PERMISSION_DENIED" ? "Picks are locked: everyone has already submitted." : "Couldn't save. Check your connection and try again."); }
-  render();
+function startEdit() {
+  if (revList(me).length >= MAXREV) { toast(`You've changed your picks ${MAXREV} times this week. That's the limit.`); return; }
+  draft = (myPicks() || []).slice(); editing = true; saveDraft(); render();
+  document.getElementById("ballot-panel").scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
-async function unsubmit() {
-  try { await dbWrite("submitted/" + me, null); toast("Your picks are open for editing again."); }
-  catch (e) { toast(e.code === "PERMISSION_DENIED" ? "Locked: all four have submitted." : "Couldn't unlock. Try again."); }
+function cancelEdit() { editing = false; render(); }
+async function submitPicks() {
+  if (draft.length !== 5) { toast("Rank all 5 teams before saving."); return; }
+  const wasEdit = editing, firstTime = !submitted[me];
+  try {
+    if (!dbOK) {
+      await dbWrite("picks/" + me, draft); if (firstTime) await dbWrite("submitted/" + me, Date.now());
+    } else {
+      let direct = true;
+      try { await db.ref(`weeks/${wkKey()}/picks/${me}`).set(draft); }
+      catch (e) { if (e.code === "PERMISSION_DENIED") direct = false; else throw e; }
+      if (direct) {
+        await db.ref(`weeks/${wkKey()}/submitted/${me}`).set(Date.now());
+      } else {
+        // week is locked (all four in): save as a revision
+        const n = revList(me).length + 1;
+        if (n > MAXREV) { toast(`You've changed your picks ${MAXREV} times this week. That's the limit.`); return; }
+        const rk = `weeks/${wkKey()}-r${me}-${n}`, t = Date.now();
+        await db.ref(`${rk}/picks/0`).set(draft);
+        for (let i = 0; i < N; i++) await db.ref(`${rk}/submitted/${i}`).set(t);
+      }
+    }
+    editing = false;
+    toast(wasEdit ? "Picks updated for everyone." : allIn() ? "That's everyone. Results are in." : "Submitted. Waiting on the others.");
+  } catch (e) { console.error(e); toast("Couldn't save. Check your connection and try again."); }
   render();
 }
 let nameTimer = {};
@@ -586,7 +625,8 @@ function renderWho() {
   });
   document.getElementById("hint").textContent =
     me == null ? "Choose your name above. Then tap teams in order of confidence: first tap is your #1."
-    : allIn() ? "All four ballots are in. Everyone's picks are shown on each team."
+    : editing ? "Editing your ballot. Tap teams to swap them around, then Save changes."
+    : allIn() ? "All four ballots are in. Everyone's picks are shown on each team. Changed your mind? Edit picks."
     : iAmIn() ? `Your picks are locked in. Others' picks stay hidden until all four have submitted.`
     : `Tap a team to add it to ${nameOf(me)}'s ballot. First tap is #1, next is #2, and so on. Reorder on the ${window.matchMedia("(max-width:900px)").matches ? "ballot above" : "right"}.`;
 }
@@ -614,9 +654,9 @@ function teamBtn(g, side) {
   const sp = spreadFor(g, side), op = openFor(g, side), wp = winProb(g, side);
   const ml = side === "away" ? g.odds.awayML : g.odds.homeML;
   const fav = sp != null && sp < 0;
-  const others = allIn() ? picks.map((p, i) => ({ i, r: (p || []).indexOf(abbr) })).filter(x => x.r >= 0 && x.i !== me) : [];
+  const others = allIn() ? picks.map((p, i) => ({ i, r: (effPicks(i) || []).indexOf(abbr) })).filter(x => x.r >= 0 && x.i !== me) : [];
   const moved = op != null && op !== sp ? `<span>Open <b>${fmtSpread(op)}</b></span>` : "";
-  const locked = iAmIn() || allIn();
+  const locked = !editing && (iAmIn() || allIn());
   return `<button class="team ${side} ${rank >= 0 ? "mine" : ""} ${dead ? "dead" : ""} ${usedWk ? "used" : ""}" data-abbr="${abbr}" ${(dead || locked) && rank < 0 ? "disabled" : ""} ${locked ? "disabled" : ""}>
     <span class="bar" style="background:#${esc(t.color)}"></span>
     <span class="body">
@@ -635,9 +675,13 @@ function renderBallotHead() {
 }
 function renderBallot() {
   renderBallotHead();
-  const mine = myPicks(), locked = iAmIn() || allIn();
+  const mine = myPicks(), locked = !editing && (iAmIn() || allIn());
   const note = document.getElementById("ballot-note");
-  note.innerHTML = iAmIn() && !allIn() ? `<div class="submitted-note"><b>✓ Submitted.</b> Waiting on ${submitted.map((s, i) => !s ? nameOf(i) : null).filter(Boolean).join(", ") || "nobody"}.</div>` : "";
+  const myRevs = me == null ? [] : revList(me);
+  const fmtT = t => new Date(t).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" });
+  note.innerHTML = editing ? `<div class="submitted-note"><b>Editing.</b> Tap teams below to swap them, reorder here, then Save changes.</div>`
+    : iAmIn() && !allIn() ? `<div class="submitted-note"><b>✓ Submitted.</b> Waiting on ${submitted.map((s, i) => !s ? nameOf(i) : null).filter(Boolean).join(", ") || "nobody"}.</div>`
+    : allIn() && myRevs.length ? `<div class="submitted-note"><b>✓ Updated ${fmtT(myRevs[myRevs.length - 1].at)}.</b> Everyone sees your latest picks.</div>` : "";
   let html = "";
   for (let i = 0; i < 5; i++) {
     const abbr = mine[i];
@@ -656,17 +700,22 @@ function renderBallot() {
   el.querySelectorAll("[data-m]").forEach(b => b.addEventListener("click", () => move(+b.dataset.i, +b.dataset.m)));
   el.querySelectorAll("[data-x]").forEach(b => b.addEventListener("click", () => removeAt(+b.dataset.x)));
   const foot = document.getElementById("ballot-foot");
+  const left = draft.length < 5 ? `${5 - draft.length} more to go.` : "All 5 ranked.";
   if (me == null) foot.innerHTML = `<span>5 pts for #1, down to 1 pt for #5.</span>`;
-  else if (allIn()) foot.innerHTML = `<span>Locked. All four ballots are in for Week ${WEEK.week}.</span>`;
-  else if (iAmIn()) foot.innerHTML = `<span>You can still change your mind until the last person submits.</span><button class="btn" id="unsubmit">Edit picks</button>`;
-  else foot.innerHTML = `<span>${draft.length < 5 ? `${5 - draft.length} more to go.` : "All 5 ranked."}</span><span style="display:flex;gap:6px"><button class="btn quiet" id="clearmine" ${draft.length ? "" : "disabled"}>Clear</button><button class="btn primary" id="submit" ${draft.length === 5 ? "" : "disabled"}>Submit picks</button></span>`;
+  else if (editing) foot.innerHTML = `<span>${left}</span><span style="display:flex;gap:6px"><button class="btn quiet" id="cancelEdit">Cancel</button><button class="btn primary" id="submit" ${draft.length === 5 ? "" : "disabled"}>Save changes</button></span>`;
+  else if (iAmIn()) {
+    const maxed = myRevs.length >= MAXREV;
+    foot.innerHTML = `<span>${allIn() ? `All four are in for Week ${WEEK.week}.` : "You can still change your mind."}</span><button class="btn" id="editPicks" ${maxed ? "disabled" : ""}>${maxed ? "Edit limit reached" : "Edit picks"}</button>`;
+  }
+  else foot.innerHTML = `<span>${left}</span><span style="display:flex;gap:6px"><button class="btn quiet" id="clearmine" ${draft.length ? "" : "disabled"}>Clear</button><button class="btn primary" id="submit" ${draft.length === 5 ? "" : "disabled"}>Submit picks</button></span>`;
   document.getElementById("submit")?.addEventListener("click", submitPicks);
-  document.getElementById("unsubmit")?.addEventListener("click", unsubmit);
+  document.getElementById("editPicks")?.addEventListener("click", startEdit);
+  document.getElementById("cancelEdit")?.addEventListener("click", cancelEdit);
   document.getElementById("clearmine")?.addEventListener("click", () => { draft = []; saveDraft(); render(); });
 }
 function tally() {
   const tot = {};
-  picks.forEach((p, i) => (p || []).forEach((abbr, r) => {
+  picks.forEach((_, i) => (effPicks(i) || []).forEach((abbr, r) => {
     tot[abbr] = tot[abbr] || { abbr, pts: 0, by: [] };
     tot[abbr].pts += PTS[r]; tot[abbr].by.push({ i, r, pts: PTS[r] });
   }));
@@ -703,10 +752,10 @@ function renderBoard() {
     const { t, g, side } = teams[r.abbr]; const opp = g[side === "home" ? "away" : "home"];
     const bar = picks.map((p, i) => { const b = r.by.find(x => x.i === i); return b ? `<i style="--pc:${PICKER_COLORS[i]};width:${b.pts * 7}px" title="${esc(nameOf(i))} #${b.r + 1} (${b.pts} pts)"></i>` : ""; }).join("");
     return `<div class="row"><span class="pos">${k + 1}</span>
-      <span class="who2"><i class="sw" style="background:#${esc(t.color)}"></i><span><span class="nm">${esc(r.abbr)}</span><br><span class="ln">${side === "home" ? "vs" : "at"} ${esc(opp.abbr)} · ${fmtSpread(spreadFor(g, side))} · ${winProb(g, side) ?? "—"}% · ${r.by.map(b => `${esc(nameOf(b.i))} #${b.r + 1}`).join(", ")}</span></span></span>
+      <span class="who2"><i class="sw" style="background:#${esc(t.color)}"></i><span><span class="nm">${esc(r.abbr)}</span><br><span class="ln">${side === "home" ? "vs" : "at"} ${esc(opp.abbr)} · ${fmtSpread(spreadFor(g, side))} · ${winProb(g, side) ?? "—"}% · ${r.by.map(b => `${esc(nameOf(b.i))} #${b.r + 1}${edited(b.i) ? " ✎" : ""}`).join(", ")}</span></span></span>
       <span class="tot"><span class="p">${r.pts}<small>pts</small></span><span class="bar">${bar}</span></span></div>`;
   }).join("");
-  legend.innerHTML = names.map((n, i) => `<span style="--pc:${PICKER_COLORS[i]}"><i></i>${esc(nameOf(i))}</span>`).join("");
+  legend.innerHTML = names.map((n, i) => `<span style="--pc:${PICKER_COLORS[i]}"><i></i>${esc(nameOf(i))}${edited(i) ? ` <em title="Changed after the reveal">✎ edited</em>` : ""}</span>`).join("");
 }
 
 // ---------- boot ----------
@@ -725,7 +774,7 @@ async function go(weekNum) {
       try { const nxt = await loadWeek(WEEK.week + 1, WEEK.season); if (nxt.games.length) WEEK = nxt; } catch (e) { console.warn("next-week lookahead failed", e); }
     }
     teams = {}; WEEK.games.forEach(g => { teams[g.away.abbr] = { t: g.away, g, side: "away" }; teams[g.home.abbr] = { t: g.home, g, side: "home" }; });
-    loadDraft();
+    editing = false; loadDraft();
     subscribeWeek();
     render();
   } catch (e) {
